@@ -26,20 +26,10 @@ PATH_DATASETS = os.environ.get("PATH_DATASETS", ".")
 
 os.chdir = ("")
 
-#TODO 
-# Add parser in a single file for Q and DQL in same using sys args 
-# Add support for dyanamic configuration using sys args 
-# Change the logging file struct for tensorboard, wandb and logging 
-# Add dynamic user with 10 different user setup 
-# User changes position every half of total step (episode)
-
 # Define arg parser with default values
 def parse_args():
     parser = argparse.ArgumentParser()
     # Arguments for the experiments name / run / setup and Weights and Biases
-    parser.add_argument("--exp-name", type=str, default="madql", choices=['madql', 'maql', 'sample_limited_madql', 'sample_limited_maql'], help="name of this experiment")
-    parser.add_argument("--user-distribution", type=str, default="static", choices=['static', 'dynamic'], help="set the user distribution, static/dyanmic user mobility")
-    parser.add_argument("--dynamic-user-step", type=int, default=10, choices=[50, 10], help="step count where user position changes")
     parser.add_argument("--seed", type=int, default=1, help="seed of experiment to ensure reproducibility")
     parser.add_argument("--torch-deterministic", type= lambda x:bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggeled, 'torch-backends.cudnn.deterministic=False'")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True, help="if toggled, cuda will be enabled by default")
@@ -52,36 +42,21 @@ def parse_args():
     parser.add_argument("--num-env", type=int, default=1, help="number of parallel environment")
     parser.add_argument("--num-episode", type=int, default=351, help="number of episode, default value till the trainning is progressed")
     parser.add_argument("--num-steps", type=int, default= 100, help="number of steps/epoch use in every episode")
-    parser.add_argument("--learning-rate", type=float, default= 3.5e-4, help="learning rate of the dql alggorithm used by every agent")
-    parser.add_argument("--gamma", type=float, default= 0.95, help="discount factor used for the calculation of q-value, can prirotize future reward if kept high")
+    parser.add_argument("--learning-rate", type=float, default= 3.5e-4, help="learning rate of the dql algorithm used by every agent")
+    parser.add_argument("--gamma", type=float, default= 0.95, help="discount factor used for the calculation of q-value, can prioritize future reward if kept high")
     parser.add_argument("--batch-size", type=int, default= 512, help="batch sample size used in a trainning batch")
-    parser.add_argument("--epsilon", type=float, default= 0.1, help="epsilon to set the eploration vs exploitation")
+    parser.add_argument("--epsilon", type=float, default= 0.1, help="epsilon to set the exploration vs exploitation")
     parser.add_argument("--update-rate", type=int, default= 10, help="steps at which the target network updates it's parameter from main network")
     parser.add_argument("--buffer-size", type=int, default=125000, help="size of replay buffer of each individual agent")
     parser.add_argument("--epsilon-min", type=float, default=0.1, help="maximum value of exploration-exploitation paramter, only used when epsilon deacay is set to True")
     parser.add_argument("--epsilon-decay", type=lambda x: bool(strtobool(x)), default=False, help="epsilon decay is used, explotation is prioritized at early episodes and on later epsidoe exploitation is prioritized, by default set to False")
     parser.add_argument("--epsilon-decay-steps", type=int, default=1, help="set the rate at which is the epsilon is deacyed, set value equates number of steps at which the epsilon reaches minimum")
-    parser.add_argument("--layers", type=int, default=2, help="set the number of layers for the target and main neural network")
-    parser.add_argument("--nodes", type=int, default=400, help="set the number of nodes for the target and main neural network layers")
-    parser.add_argument("--covered-user-as-input", type=lambda x: bool(strtobool(x)), default=False, help="if set true, state will include covered user as one additional value and use it as input to the neural network")
-    parser.add_argument("--time-as-input", type=lambda x: bool(strtobool(x)), default=False, help="if set true, time will be used as one additional state")
-
-    # Environment specific arguments 
-    parser.add_argument("--info-exchange-lvl", type=int, default=1, help="information exchange level between UAVs: 1 -> implicit, 2 -> reward, 3 -> position with distance penalty, 4 -> state")
     
     # Arguments for used inside the wireless UAV based enviornment  
-    parser.add_argument("--num-user", type=int, default=100, help="number of user in defined environment")
-    parser.add_argument("--num-uav", type=int, default=5, help="number of uav for the defined environment")
-    parser.add_argument("--generate-user-distribution", type=lambda x: bool(strtobool(x)), default=False, help="if true generate a new user distribution, set true if changing number of users")
-    parser.add_argument("--carrier-freq", type=int, default=2, help="set the frequency of the carrier signal in GHz")
-    parser.add_argument("--coverage-xy", type=int, default=1000, help="set the length of target area (square)")
+    parser.add_argument("--num-user", type=int, default=50, help="number of user in defined environment")
+    parser.add_argument("--num-uav", type=int, default=1, help="number of uav for the defined environment")
     parser.add_argument("--uav-height", type=int, default=350, help="define the altitude for all uav")
-    parser.add_argument("--theta", type=int, default=60, help="angle of coverage for a uav in degree")
-    parser.add_argument("--bw-uav", type=float, default=4e6, help="actual bandwidth of the uav")
-    parser.add_argument("--bw-rb", type=float, default=180e3, help="bandwidth of a resource block")
     parser.add_argument("--grid-space", type=int, default=100, help="seperating space for grid")
-    parser.add_argument("--uav-dis-th", type=int, default=1000, help="distance value that defines which uav agent share info")
-    parser.add_argument("--dist-pri-param", type=float, default=1/5, help="distance penalty priority parameter used in level 3 info exchange")
     
     args = parser.parse_args()
 
@@ -92,11 +67,44 @@ def parse_args():
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
+class GNNNetwork(nn.Module):
+    def __init__(self, input_features, output_features, hidden_dim):
+        super(GNNNetwork, self).__init__()
+        self.gcn_layer = nn.Linear(input_features, hidden_dim)
+        self.relu = nn.ReLU()
+        self.linear_stack = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_features)
+        )
+
+    def forward(self, x, num_nodes):
+        # x: tensor(batch, nodes, features)
+        batch_size = x.size(0)
+        adj_matrix = torch.ones(num_nodes, num_nodes, device=x.device) - torch.eye(num_nodes, device=x.device)
+        degree_matrix = torch.diag(adj_matrix.sum(dim=1))
+        degree_matrix_inv_sqrt = torch.diag(torch.pow(degree_matrix.diag(), -0.5))
+        degree_matrix_inv_sqrt[degree_matrix_inv_sqrt == float('inf')] = 0  # Handle division by zero
+        adj_matrix = torch.mm(torch.mm(degree_matrix_inv_sqrt, adj_matrix), degree_matrix_inv_sqrt)
+        adj_matrix = adj_matrix.unsqueeze(0).repeat(batch_size, 1, 1)  # (batch, nodes, nodes)
+
+        # GCN aggregation
+        x = torch.bmm(adj_matrix, x)  # (batch, nodes, features)
+        x = self.gcn_layer(x)  # (batch, nodes, hidden_dim)
+        x = self.relu(x)
+
+        # Apply linear stack to each node individually
+        x = self.linear_stack(x)  # (batch, nodes, output_features)
+        return x
+
+
 # DNN modeling
 class NeuralNetwork(nn.Module):
     # NN is set to have same structure for all lvl of info exchange in this setup
     def __init__(self, state_size, action_size):
-        super(NeuralNetwork, self).__init__()
+        super().__init__()
         self.state_size = state_size
         self.action_size = action_size
         self.linear_stack = model = nn.Sequential(
@@ -166,36 +174,21 @@ class DQL:
     # Training of the DNN 
     def train(self,batch_size, dnn_epoch):
         for k in range(dnn_epoch):
-            minibatch = np.empty(batch_size, dtype=object)
+            # minibatch = np.empty(batch_size, dtype=object)
             minibatch = random.sample(self.replay_buffer, batch_size)
-            minibatch = np.array(minibatch)
+            # minibatch = np.array(minibatch)
             # minibatch = minibatch.reshape(batch_size,5)
-            state = torch.FloatTensor(np.vstack(minibatch[:,0])).reshape(batch_size, -1)
-            action = torch.LongTensor(np.vstack(minibatch[:,1])).reshape(batch_size, -1)
-            reward = torch.FloatTensor(np.vstack(minibatch[:,2])).reshape(batch_size, -1)
-            next_state = torch.FloatTensor(np.vstack(minibatch[:,3])).reshape(batch_size, -1)
-            done = torch.Tensor(np.vstack(minibatch[:,4]))
-            state = state.to(device = device)
-            action = action.to(device = device)
-            reward = reward.to(device = device)
-            next_state = next_state.to(device = device)
-            done = done.to(device = device)
+            
+            states, actions, rewards, next_states, dones = zip(*minibatch)
+            
+            state = torch.FloatTensor(np.vstack(states)).to(device)
+            action = torch.LongTensor(np.vstack(actions)).to(device)
+            reward = torch.FloatTensor(np.vstack(rewards)).to(device)
+            next_state = torch.FloatTensor(np.vstack(next_states)).to(device)
+            done = torch.FloatTensor(np.vstack(dones)).to(device)
 
             diff = state - next_state
             done_local = (diff != 0).any(dim=1).float().to(device)
-            
-            #TODO 
-            # New Proposal for Distributed Learning 
-            # Q_next = Q-value based on target Q-network 
-            # Q_current = Q-value based on current Q-network 
-            # Target_Q = Choose the samples with increament in the Q 
-            # i.e. target_q = max(Q_current, r+gamma*Q_next) 
-            # i.e. or, target_q_idx = Q_current < r+gamma*Q_next // only the sample indexed where there is increament
-            # i.e or, target_q = (r+gamma*Q_next)[Q_current < r+gamma*Q_next]
-            # Drop rest of the samples and only choose these indexes for the computation of loss
-            # Q_main = main_n/w(state)[target_q_idx]
-            # Compute Huber loss, loss(Q_main, Q_taget)
-            # Reiterate for adjusting weights and baises params
 
             # Implementation of DQL algorithm 
             Q_next = self.target_network(next_state).detach()
@@ -297,7 +290,7 @@ if __name__ == "__main__":
     # Create object of each UAV agent // Each agent is equpped with it's DQL system
     UAV_OB = []
     for k in range(NUM_UAV):
-                UAV_OB.append(DQL())
+        UAV_OB.append(DQL())
     best_result = 0
 
     # Start of the episode
@@ -392,8 +385,8 @@ if __name__ == "__main__":
         # Keep track of hyper parameter and other valuable information in tensorboard log directory 
         # Track the params of all agent
         # Since all agents are identical only tracking one agents params
-        writer.add_scalar("params/learning_rate", UAV_OB[1].learning_rate, i_episode )
-        writer.add_scalar("params/epsilon", UAV_OB[1].epsilon_thres, i_episode)
+        writer.add_scalar("params/learning_rate", UAV_OB[0].learning_rate, i_episode )
+        writer.add_scalar("params/epsilon", UAV_OB[0].epsilon_thres, i_episode)
 
         if i_episode % 10 == 0:
             # Reset of the environment
@@ -428,7 +421,7 @@ if __name__ == "__main__":
                     best_state = states    
 
             # Custom logs and figures save / 
-            custom_dir = f'custom_logs\lvl_{args.info_exchange_lvl}\{run_id}'
+            custom_dir = f'custom_logs/lvl_{args.info_exchange_lvl}/{run_id}'
             if not os.path.exists(custom_dir):
                 os.makedirs(custom_dir)
                 
@@ -437,7 +430,7 @@ if __name__ == "__main__":
             ####   Custom logs    ####
             ##########################
             figure = plt.title("Simulation")
-            # plt.savefig(custom_dir + f'\{i_episode}__{t}.png')
+            # plt.savefig(custom_dir + f'/{i_episode}__{t}.png')
 
             #############################
             ####   Tensorboard logs  ####
@@ -454,11 +447,11 @@ if __name__ == "__main__":
     ##########################
     ## Save the data from the run as a file in custom logs
     mdict = {'num_episode':range(0, num_episode),'episodic_reward': episode_reward}
-    savemat(custom_dir + f'\episodic_reward.mat', mdict)
+    savemat(custom_dir + f'/episodic_reward.mat', mdict)
     mdict_2 = {'num_episode':range(0, num_episode),'connected_user': episode_user_connected}
-    savemat(custom_dir + f'\connected_users.mat', mdict_2)
+    savemat(custom_dir + f'/connected_users.mat', mdict_2)
     mdict_3 = {'num_episode':range(0, num_episode),'episodic_reward_agent': episode_reward_agent}
-    savemat(custom_dir + f'\epsiodic_reward_agent.mat', mdict_3)
+    savemat(custom_dir + f'/epsiodic_reward_agent.mat', mdict_3)
     
     # Plot the accumulated reward vs episodes // Save the figures in the respective directory 
     # Episodic Reward vs Episodes
@@ -467,7 +460,7 @@ if __name__ == "__main__":
     plt.xlabel("Episode")
     plt.ylabel("Episodic Reward")
     plt.title("Episode vs Episodic Reward")
-    plt.savefig(custom_dir + f'\episode_vs_reward.png')
+    plt.savefig(custom_dir + f'/episode_vs_reward.png')
     plt.close()
     # Episode vs Connected Users
     fig_2 = plt.figure()
@@ -475,7 +468,7 @@ if __name__ == "__main__":
     plt.xlabel("Episode")
     plt.ylabel("Connected User in Episode")
     plt.title("Episode vs Connected User in Episode")
-    plt.savefig(custom_dir + f'\episode_vs_connected_users.png')
+    plt.savefig(custom_dir + f'/episode_vs_connected_users.png')
     plt.close()
     # Episodic Reward vs Episodes (Smoothed)
     fig_3 = plt.figure()
@@ -484,16 +477,16 @@ if __name__ == "__main__":
     plt.xlabel("Episode")
     plt.ylabel("Episodic Reward")
     plt.title("Smoothed Episode vs Episodic Reward")
-    plt.savefig(custom_dir + f'\episode_vs_rewards(smoothed).png')
+    plt.savefig(custom_dir + f'/episode_vs_rewards(smoothed).png')
     plt.close()
     # Plot for best and final states 
     fig = plt.figure()
     final_render(states_fin, "final")
-    plt.savefig(custom_dir + r'\final_users.png')
+    plt.savefig(custom_dir + r'/final_users.png')
     plt.close()
     fig_4 = plt.figure()
     final_render(best_state, "best")
-    plt.savefig(custom_dir + r'\best_users.png')
+    plt.savefig(custom_dir + r'/best_users.png')
     plt.close()
     print(states_fin)
     print('Total Connected User in Final Stage', temp_data[4])

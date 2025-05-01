@@ -10,6 +10,8 @@ def final_render(state, remark):
         USER_LOC = np.loadtxt('UserLocation_1.txt', dtype=np.int32, delimiter=' ')
     elif remark == "best_user2":
         USER_LOC = np.loadtxt('UserLocation_2.txt', dtype=np.int32, delimiter=' ')
+    else:
+        USER_LOC = np.loadtxt('UserLocation.txt', dtype=np.int32, delimiter=' ')
     u_loc = USER_LOC
     fig = plt.figure()
     gs = GridSpec(1, 1, figure=fig)

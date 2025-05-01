@@ -1,3 +1,15 @@
 wandb
 runs
 custom_logs
+/__pycache__
+*.pyc
+*.pkl
+*.pyd
+*.pdb
+*.egg-info
+*.egg
+.history
+.vscode
+*.ipynb_checkpoints
+*.mat
+*.png
